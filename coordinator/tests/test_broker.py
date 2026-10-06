@@ -21,7 +21,9 @@ class Backend(BaseHTTPRequestHandler):
         self.send_response(200);self.send_header('Content-Type','application/x-ndjson');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
 
 @pytest.fixture
-def app(tmp_path):
+def app(tmp_path,monkeypatch):
+    # These are broker/HTTP tests, not an NVIDIA device acceptance test.
+    monkeypatch.setattr('server.gpu_snapshot',lambda: {'free_mb':16000,'used_mb':0,'total_mb':16000,'observed_at':time.time()})
     backend=ThreadingHTTPServer(('127.0.0.1',0),Backend);threading.Thread(target=backend.serve_forever,daemon=True).start()
     broker=Broker(tmp_path,backend=f'http://127.0.0.1:{backend.server_port}')
     http=ThreadingHTTPServer(('127.0.0.1',0),Handler);http.broker=broker

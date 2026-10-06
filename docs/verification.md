@@ -38,3 +38,8 @@ documentation; it contains no live job data.
 The declaration above distinguishes deterministic diagram validation, real
 browser measurements and visual inspection. It is not a runtime acceptance
 test of the GPU scheduler.
+
+The first hosted Windows run exposed a hardware dependency in two legacy broker
+tests: their fixture fell back to the host's NVIDIA probe. The fixture now supplies
+fresh synthetic GPU telemetry, so those HTTP/lifecycle tests require no physical
+GPU. No production scheduling policy was relaxed to accommodate CI.
