@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPU-Warteschlange · Live</title>
+<style>
+:root{color-scheme:light;--ink:#18364c;--muted:#526879;--blue:#1466b8;--amber:#865300;--red:#a32e24}
+*{box-sizing:border-box}
+body{font:16px system-ui,sans-serif;background:#eef3f7;color:var(--ink);max-width:1480px;margin:32px auto;padding:0 20px}
+h1{font-size:clamp(24px,4vw,32px);margin:0 0 8px}h2{font-size:20px;margin:0 0 12px}h3{font-size:18px;margin:0}
+p{line-height:1.5}.subtitle{margin:0;color:var(--muted)}
+section{background:white;padding:22px;border-radius:14px;margin:20px 0;box-shadow:0 1px 4px #0000000a}
+.section-head,.gpu-head,.card-head,.toolbar,.counts{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+.gpu-head{align-items:flex-start}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 6px;font-weight:700}
+#gpu-name{font-size:22px}#gpu-values{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums;margin:16px 0 10px}
+.meter{height:18px;background:#dfebf4;border-radius:9px;position:relative;margin:14px 5px 12px}
+.meter-fill{height:100%;width:0;background:var(--blue);border-radius:9px;transition:width 150ms cubic-bezier(0.2,0,0,1)}
+.meter-pointer{position:absolute;left:0;top:-5px;width:5px;height:28px;background:#0b3e70;border:1px solid white;border-radius:3px;transform:translateX(-50%);transition:left 150ms cubic-bezier(0.2,0,0,1)}
+.meter[data-stale="true"] .meter-fill{background:#7b8e9d}.meter[data-stale="true"] .meter-pointer{background:#526879}
+.meter[data-missing="true"] .meter-fill,.meter[data-missing="true"] .meter-pointer{visibility:hidden}
+.meter-caption{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--muted)}
+.measurement-note{font-size:13px;color:var(--muted);margin-bottom:0}
+.pill,.badge{display:inline-block;padding:5px 10px;border-radius:6px;font-size:13px;font-weight:650}
+.pill{background:#edf4f9}.badge.active{color:#084b8d;background:#dcecff}.badge.queued{color:#744800;background:#fff0c2}.badge.terminal{color:#536573;background:#e8edf1}.badge.error{color:#942c23;background:#ffe5e1}
+.counts{justify-content:flex-start;margin:16px 0}.count{padding:10px 15px;border-radius:8px;background:#eef5fc;font-size:14px}.count strong{font-size:23px;display:inline-block;margin-right:5px;font-variant-numeric:tabular-nums}
+.count.queued{background:#fff4d9;color:#744800}.count.error{background:#fff0ee;color:#942c23}
+#active-jobs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:14px}
+.job-card{padding:18px;border-radius:10px;background:#edf5ff;border-left:5px solid var(--blue);overflow-wrap:anywhere}
+.job-card.error{background:#fff1ee;border-left-color:var(--red)}
+.card-head{align-items:flex-start;flex-wrap:nowrap}.card-title{min-width:0}.job-card p{margin:10px 0}.job-card .identity{font-size:13px;color:var(--muted)}
+.job-card .budget{font-weight:650}.job-card .consumption{font-size:14px;color:var(--muted)}
+.job-card .patient{font-size:14px}.job-card .card-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.toolbar{justify-content:flex-start;margin-bottom:12px}.check{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:6px 8px;border-radius:6px}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--blue)}
+small,.muted{color:var(--muted)}#access,#page-info,#table-empty{font-size:14px}
+.table-wrap{max-height:52vh;overflow:auto;border:1px solid #dce4eb;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:1090px}
+thead{position:sticky;top:0;background:#edf4f9;z-index:1}td,th{text-align:left;padding:11px 10px;border-bottom:1px solid #dce4eb;vertical-align:top}
+th{font-weight:650}tbody tr{cursor:pointer}tbody tr:hover{filter:brightness(.97)}
+tbody tr.active{background:#f0f7ff}tbody tr.queued{background:#fff9e9}tbody tr.terminal{background:#f5f7f9;color:#596b79}tbody tr.error{background:#fff1ee}
+tbody tr td:first-child{border-left:4px solid transparent}tbody tr.active td:first-child{border-left-color:var(--blue)}tbody tr.queued td:first-child{border-left-color:#b87500}tbody tr.error td:first-child{border-left-color:var(--red)}
+button,select{font:inherit;min-height:40px;padding:8px 10px;border:1px solid #b9cedb;border-radius:6px;background:#f6f9fc;color:var(--ink)}
+button{cursor:pointer}button:hover{background:#e3eef9}button:disabled,select:disabled{opacity:.55;cursor:default}
+[role=tablist]{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}[role=tab][aria-selected=true]{background:#1466b8;color:white;border-color:#1466b8}
+#screenshot[aria-pressed=true]{background:#fff0c2;border-color:#865300;color:#744800}
+button.danger{color:var(--red);border-color:#dba59f;background:#fff8f6}
+:focus-visible{outline:3px solid #1265b5;outline-offset:3px}td.controls{min-width:132px}td.controls button,td.controls select{margin:0 0 6px;max-width:160px}
+#cancel-confirm{border:2px solid #bd5146}#cancel-confirm button{margin-right:8px}
+#details{font-size:13px;line-height:1.6;overflow-wrap:anywhere;white-space:pre-wrap;margin-bottom:0}
+#error{color:var(--red)}[hidden]{display:none!important}
+@media(max-width:650px){body{padding:0 12px;margin:22px auto}section{padding:16px}.count{flex:1;padding:9px;font-size:12px}.count strong{font-size:20px}.gpu-head{display:block}#gpu-state{margin-top:10px}.meter-caption{font-size:12px}.job-card{padding:14px}.card-head{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.meter-fill,.meter-pointer{transition:none}}
+</style>
+</head>
+<body>
+<header><h1>Lokale GPU-Warteschlange</h1><p class="subtitle">Wer rechnet gerade – wer wartet – warum?</p></header>
+<div role="tablist" aria-label="Auftragsspur"><button id="tab-gpu" role="tab" aria-selected="true" aria-controls="lane-panel">GPU</button><button id="tab-cpu" role="tab" aria-selected="false" aria-controls="lane-panel" tabindex="-1">CPU</button></div>
+<p><button id="screenshot" aria-pressed="false">Screenshot-Schutz AUS · Patienten verbergen</button></p>
+<div id="lane-panel" role="tabpanel" aria-labelledby="tab-gpu">
+<section id="gpu" aria-labelledby="gpu-name">
+  <div class="gpu-head"><div><p class="eyebrow">Live · gesamte GPU</p><h2 id="gpu-name">GPU-Status wird geladen …</h2></div><span class="pill" id="gpu-state">Messung ausstehend</span></div>
+  <p id="gpu-values">Speicherbelegung wird geladen …</p>
+  <div class="meter" id="gpu-meter" role="meter" aria-label="Gemessene gesamte GPU-Speicherbelegung" aria-valuemin="0" aria-valuemax="100" data-missing="true"><div class="meter-fill" id="gpu-fill"></div><div class="meter-pointer" id="gpu-pointer"></div></div>
+  <div class="meter-caption"><span id="gpu-utilization">Auslastung: –</span><span id="gpu-observed">Noch keine Messung</span></div>
+  <p class="measurement-note">Gemessener Gesamtspeicher, einschließlich Grafik und anderer Programme. Keine Zuordnung zu einzelnen Jobs.</p>
+</section>
+<section aria-labelledby="active-heading">
+  <div class="section-head"><h2 id="active-heading">Jetzt aktiv</h2><span class="muted" id="live-label">Aktuelle Aufträge bleiben auch beim Blättern sichtbar.</span></div>
+  <div class="counts" aria-label="Aktuelle Aufträge"><div class="count"><strong id="active-count">0</strong>aktiv</div><div class="count queued"><strong id="queued-count">0</strong>wartend</div><div class="count error"><strong id="blocked-count">0</strong>Klärung erforderlich</div></div>
+  <div id="active-jobs"></div><p class="muted" id="active-empty">Aktuelle Aufträge werden geladen …</p>
+</section>
+<section id="cancel-confirm" hidden role="region" aria-label="Auftrag abbrechen">
+  <h2>Auftrag abbrechen?</h2><p id="cancel-text"></p><p>Nur dieser Auftrag wird beendet. Bei Ollama kann das Ende der laufenden Antwort abgewartet werden müssen.</p>
+  <button class="danger" id="cancel-yes">Abbruch bestätigen</button><button id="cancel-no">Doch nicht</button>
+</section>
+<section aria-labelledby="history-heading">
+  <h2 id="history-heading">Jobs und Historie</h2>
+  <div class="toolbar"><label class="check"><input type="checkbox" id="hide-ended" checked> Beendete ausblenden</label><label class="check"><input type="checkbox" id="private" disabled> Patientenbezug anzeigen</label></div>
+  <p id="access">Lokale Leseansicht wird geladen. Keine Anmeldung zum Lesen erforderlich.</p>
+  <p class="measurement-note">Legacy: Alte Jobs ohne gespeicherte Spur erscheinen unter GPU. Diese Standardzuordnung belegt keinen tatsächlichen GPU-Verbrauch.</p>
+  <p class="measurement-note" id="policy">GPU: höchstens 2 budgetierte Jobs, 2048 MiB Reserve. Unbekannter Bedarf: exklusiv. CPU-Embedding: eigene begrenzte Spur. Priorität beendet keine laufenden Jobs.</p>
+  <p class="measurement-note">Blau: aktiv · Gelb: wartend · Grau: beendet · Rot: Fehler oder Klärung. „Beendete ausblenden“ verbirgt auch fehlgeschlagene und unterbrochene Jobs, nicht ungeklärte Aufträge.</p>
+  <div class="table-wrap" tabindex="0" aria-label="Auftragstabelle, horizontal scrollbar">
+    <table><thead><tr><th>Job / Beginn</th><th>Skript / Modell</th><th>Status</th><th>Spur / deklariertes Budget</th><th>Priorität</th><th>Davor</th><th>Warten / Lauf</th><th>Grund / Blocker</th><th>Patient</th><th id="control-head" hidden>Steuerung</th></tr></thead><tbody id="jobs"></tbody></table>
+  </div>
+  <p class="muted" id="table-empty" hidden></p>
+  <p id="page-info">Aktuelle Historie</p><button id="older" disabled>Ältere Historie</button> <button id="current">Aktuell</button>
+</section>
+<section aria-labelledby="details-heading"><h2 id="details-heading">Jobdetails</h2><pre id="details">Eine Zeile oder „Details“ wählen: Zeitpunkte, Skriptversion, Versuche und Statusverlauf.</pre></section>
+</div>
+<p id="error" role="alert"></p>
+<footer><small>Nur eingebundene Programme werden koordiniert. Direkter CUDA-/Ollama-Zugriff kann vorbeigehen. Anfrageinhalte und Ergebnisse werden hier nicht angezeigt. Aktualisierung alle 2 Sekunden.</small></footer>
+<script>
+// BEGIN LIVE HELPERS
+const terminalStates = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
+const activeStates = new Set(['running', 'preparing', 'draining', 'cancelling', 'recovery_blocked']);
+function stateTone(state) {
+  if (state === 'failed' || state === 'recovery_blocked') return 'error';
+  if (state === 'queued') return 'queued';
+  return activeStates.has(state) ? 'active' : 'terminal';
+}
+function visibleJobs(jobs, hideEnded) {
+  const rank = j => j.state === 'recovery_blocked' ? 1 : activeStates.has(j.state) ? 0 : j.state === 'queued' ? 2 : 3;
+  return jobs.filter(j => !hideEnded || !terminalStates.has(j.state)).slice().sort((a, b) => rank(a) - rank(b));
+}
+function activeJobs(jobs) {
+  return visibleJobs(jobs.filter(j => activeStates.has(j.state)), false);
+}
+function privacyState(previous, authorized) {
+  return {authorized: !!authorized, show: !!authorized && (!previous.authorized || previous.show)};
+}
+function gpuMeter(gpu, now) {
+  const number = x => typeof x === 'number' && Number.isFinite(x);
+  const available = !gpu.error && number(gpu.used_mb) && number(gpu.total_mb) && gpu.total_mb > 0;
+  const age = number(gpu.observed_at) ? Math.max(0, now - gpu.observed_at) : null;
+  return {
+    available,
+    percent: available ? Math.max(0, Math.min(100, gpu.used_mb / gpu.total_mb * 100)) : 0,
+    stale: age === null || age > 15,
+    age,
+    utilization: number(gpu.utilization) ? Math.max(0, Math.min(100, gpu.utilization)) : null
+  };
+}
+function jobConsumption(j) {
+  // The current API has no measured per-job VRAM. WDDM returns [N/A] for
+  // compute-process used_memory. Never substitute total GPU use or a budget.
+  return j.lane === 'cpu' ? 'CPU-Spur · kein GPU-Verbrauch zugeordnet' : 'Jobverbrauch nicht messbar (Treiber)';
+}
+// END LIVE HELPERS
+const names = {queued:'Wartend',preparing:'Vorbereitung',running:'Läuft',draining:'Entladen',cancelling:'Abbruch ausstehend',completed:'Fertig',failed:'Fehler',interrupted:'Unterbrochen',cancelled:'Abgebrochen',recovery_blocked:'Klärung erforderlich'};
+const priorities = {0:'Hintergrund',10:'Normal',20:'Hoch'};
+const reasons={waiting_turn:'Wartet auf Reihenfolge',starting:'Zuteilung beginnt',gpu_granted:'GPU freigegeben',cpu_granted:'CPU freigegeben',ollama_inference:'Ollama berechnet Antwort',unloading_model_after_response:'Antwort gesichert; eigenes Modell wird entladen',heartbeat_missing_process_still_alive:'Lebenszeichen fehlt; Reservierung bleibt',orphan_child_still_running:'Starter beendet; Kindprozess läuft',backend_or_cleanup_uncertain:'Backendzustand unklar; Spur gesperrt',broker_restart_backend_state_uncertain:'Nach Neustart: Berechnung prüfen',result_saved_model_unloaded:'Ergebnis gespeichert, Modell entladen',command_exit:'Prozess beendet',supervisor_exited_before_child:'Starter vor Jobbeginn beendet',supervisor_crash_tree_exit_unconfirmed:'Prozessbaum nach Starter-Absturz prüfen',operator_reconciled_no_automatic_replay:'Geprüft beendet; keine automatische Wiederholung',cancelled_by_owner:'Vor Start abgebrochen',accepted_durably:'Dauerhaft angenommen',cancel_pending_tree_exit:'Abbruch angefordert; eigener Prozessbaum muss enden',cancel_pending_backend_drain:'Abbruch vorgemerkt; Ollama-Antwort wird abgewartet',owned_tree_exit_confirmed:'Eigener Prozessbaum nachweislich beendet',backend_drained_model_unloaded:'Antwort beendet, eigenes Modell entladen',cpu_lane_busy:'CPU-Embedding-Spur belegt',model_in_use:'Dasselbe Modell wird verwendet',lane_recovery_blocked:'Spur wartet auf Klärung',gpu_slot_limit:'Beide GPU-Plätze belegt',exclusive_job_wait:'Exklusive GPU-Reservierung',ollama_gpu_limit:'Eine GPU-Ollama-Anfrage läuft bereits',fresh_gpu_probe_required:'Aktuelle GPU-Messung fehlt',vram_budget_wait:'Budget + Reservierungen + 2048 MiB passen nicht',oom_retry_exclusive:'Einmaliger exklusiver OOM-Neuversuch',priority_changed:'Priorität geändert',http_error:'Backend hat Anfrage abgelehnt'};
+const el = id => document.getElementById(id);
+const date = x => x ? new Date(x * 1000).toLocaleString('de-DE') : '–';
+const numberText = x => typeof x === 'number' && Number.isFinite(x) ? x.toLocaleString('de-DE', {maximumFractionDigits:1}) : '–';
+const emptyDetails = 'Eine Zeile oder „Details“ wählen: Zeitpunkte, Skriptversion, Versuche und Statusverlauf.';
+let offset = 0, csrf = null, refreshInFlight = false, refreshAgain = false, pendingCancel = null;
+let privacy = {authorized:false, show:false}, selectedId = null, lastStatus = null, lastHistory = [];
+let selectedLane = 'gpu', screenshotMode = false;
+let viewEpoch = 0;
+const rows = new Map(), cards = new Map();
+function text(node, value) {
+  let next = String(value ?? '–');
+  if (screenshotMode) {
+    for (const j of [...(lastStatus?.jobs || []), ...lastHistory, ...(pendingCancel ? [pendingCancel] : [])]) {
+      const id = j.context?.case_id;
+      if (id) next = next.split(id).join('[verborgen]');
+    }
+  }
+  if (node.textContent !== next) node.textContent = next;
+}
+function node(tag, className) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  return element;
+}
+function patient(j) {
+  return privacy.authorized && privacy.show && !screenshotMode ? (j.context?.case_id || 'nicht mitgegeben') : 'ausgeblendet';
+}
+function budget(j) {
+  if (j.lane === 'cpu') return 'CPU · kein GPU-Budget';
+  return j.vram_mb ? numberText(j.vram_mb) + ' MiB · deklariertes Budget' : 'GPU · Budget unbekannt, exklusiv';
+}
+function reason(j) {
+  const blocker = (j.waiting_for || []).find(x => x.state !== 'queued');
+  return (reasons[j.reason] || j.reason || '–') + (blocker ? ' · ' + blocker.owner + ' / ' + blocker.model : '');
+}
+function clearDetails() {
+  selectedId = null;
+  text(el('details'), emptyDetails);
+}
+function applyAuthorization(s) {
+  const next = privacyState(privacy, s.local_read_allowed);
+  if (privacy.authorized && !next.authorized) {
+    clearDetails();
+    pendingCancel = null;
+    el('cancel-confirm').hidden = true;
+    text(el('cancel-text'), '');
+    offset = 0;
+  }
+  privacy = next;
+  csrf = next.authorized && s.operator_unlocked ? s.csrf : null;
+  el('private').checked = next.show;
+  el('private').disabled = !next.authorized;
+  el('older').disabled = !next.authorized;
+  el('control-head').hidden = !csrf;
+  text(el('access'), csrf
+    ? 'Lokale Steuerung aktiv (30 Minuten): nur Priorität und Abbruch.'
+    : next.authorized
+      ? 'Lokale Leseansicht mit Patientenbezug, ohne Anmeldung. Nur zur Steuerung: client.py open --control.'
+      : 'Lokale Leseansicht noch nicht bestätigt. Verbindung wird geprüft.');
+}
+function details(j) {
+  selectedId = j.id;
+  const context = lastStatus?.private_unlocked && !screenshotMode ? j.context : null;
+  const lines = [
+    'Job: ' + j.id, 'Status: ' + (names[j.state] || j.state),
+    'Skript: ' + (context?.script || j.script),
+    'SHA-256: ' + (context?.script_sha256 || 'nicht mitgegeben'),
+    'Chat: ' + (context?.chat_id || 'nicht mitgegeben'),
+    'Spur: ' + (j.lane || 'GPU v1'), 'Budget: ' + budget(j), jobConsumption(j),
+    'Priorität: ' + (priorities[j.priority] || 'Normal') + '; effektiv: ' + (priorities[j.effective_priority] || 'Normal'),
+    'Angenommen: ' + date(j.created), 'Start: ' + date(j.started), 'Ende: ' + date(j.ended),
+    'Aktiver Abbruch: ' + (j.cancel_capable ? 'unterstützt (Bestätigung abwarten)' : 'alter Starter / nicht unterstützt')
+  ];
+  if (privacy.authorized && privacy.show) lines.push('Patient: ' + patient(j));
+  if (privacy.authorized) {
+    for (const a of j.attempts || []) lines.push('Versuch ' + a.number + ': ' + a.state + ' · Exit ' + (a.exit_code ?? '–'));
+    lines.push('');
+    for (const e of j.events || []) lines.push(date(e.at) + ' · ' + (names[e.state] || e.state) + ' · ' + (reasons[e.reason] || e.reason));
+  }
+  text(el('details'), lines.join('\n'));
+}
+function promptCancel(j) {
+  if (!csrf) return;
+  pendingCancel = j;
+  text(el('cancel-text'), j.id + ' · ' + j.owner + ' / ' + j.model);
+  el('cancel-confirm').hidden = false;
+  el('cancel-yes').focus();
+}
+function closeCancel() {
+  pendingCancel = null;
+  el('cancel-confirm').hidden = true;
+  text(el('cancel-text'), '');
+}
+function canCancel(j) {
+  return j.state === 'queued' || (j.cancel_capable && ['running','preparing','draining'].includes(j.state));
+}
+function updateControls(container, j) {
+  container.job = j;
+  // Keep native controls mounted through polling, including an open SELECT.
+  const signature = [!!csrf, j.state === 'queued', !!canCancel(j)].join('/');
+  if (container.signature !== signature) {
+    const hadFocus = container.contains(document.activeElement);
+    container.replaceChildren();
+    container.priority = null;
+    container.signature = signature;
+    if (csrf && j.state === 'queued') {
+      const select = node('select');
+      select.setAttribute('aria-label', 'Priorität für ' + j.id);
+      for (const [value, label] of Object.entries(priorities)) select.add(new Option(label, value));
+      select.onchange = () => change(container.job, '/priority', {priority:Number(select.value)});
+      container.append(select);
+      container.priority = select;
+    }
+    if (csrf && canCancel(j)) {
+      const button = node('button', 'danger');
+      text(button, 'Abbrechen');
+      button.setAttribute('aria-label', 'Auftrag ' + j.id + ' abbrechen');
+      button.onclick = () => promptCancel(container.job);
+      container.append(button);
+    }
+    if (hadFocus) (container.children[0] || container.fallbackFocus || container.parentNode)?.focus();
+  }
+  if (container.priority && document.activeElement !== container.priority) container.priority.value = String(j.priority ?? 10);
+}
+function reconcile(parent, cache, jobs, create, update) {
+  const wanted = new Set(jobs.map(j => j.id));
+  for (const [id, item] of cache) {
+    if (!wanted.has(id)) {
+      if (item.contains(document.activeElement)) el('current').focus();
+      item.remove();
+      cache.delete(id);
+    }
+  }
+  jobs.forEach((j, index) => {
+    let item = cache.get(j.id);
+    if (!item) { item = create(j); cache.set(j.id, item); }
+    update(item, j);
+    if (parent.children[index] !== item) {
+      const focused = item.contains(document.activeElement) ? document.activeElement : null;
+      parent.insertBefore(item, parent.children[index] || null);
+      if (focused) focused.focus();
+    }
+  });
+}
+function createCard(j) {
+  const card = node('article');
+  card.dataset.jobId = j.id;
+  const header = node('div', 'card-head'), title = node('h3', 'card-title'), badge = node('span');
+  header.append(title, badge);
+  const identity = node('p','identity'), script = node('p'), timing = node('p'), budgetLine = node('p','budget');
+  const consumption = node('p','consumption'), why = node('p'), patientLine = node('p','patient');
+  const actions = node('div','card-actions'), detailButton = node('button'), controls = node('div');
+  text(detailButton, 'Details');
+  detailButton.onclick = () => details(card.job);
+  controls.fallbackFocus = detailButton;
+  actions.append(detailButton, controls);
+  card.append(header, identity, script, timing, budgetLine, consumption, why, patientLine, actions);
+  card.view = {title, badge, identity, script, timing, budgetLine, consumption, why, patientLine, controls};
+  return card;
+}
+function updateCard(card, j) {
+  card.job = j;
+  card.className = 'job-card ' + stateTone(j.state);
+  const v = card.view;
+  text(v.title, j.owner + ' / ' + j.model);
+  v.badge.className = 'badge ' + stateTone(j.state);
+  text(v.badge, names[j.state] || j.state);
+  text(v.identity, 'Job ' + j.id + ' · ' + (j.lane === 'cpu' ? 'CPU-Spur' : 'GPU-Spur'));
+  text(v.script, j.script);
+  text(v.timing, 'Start ' + date(j.started) + ' · Laufzeit ' + numberText(j.run_seconds) + ' s');
+  text(v.budgetLine, budget(j));
+  text(v.consumption, jobConsumption(j));
+  text(v.why, reason(j));
+  text(v.patientLine, 'Patient: ' + patient(j));
+  updateControls(v.controls, j);
+}
+function createRow(j) {
+  const row = node('tr');
+  row.dataset.jobId = j.id;
+  row.tabIndex = 0;
+  for (let i = 0; i < 9; i++) row.append(node('td'));
+  const controls = node('td', 'controls');
+  controls.onclick = e => e.stopPropagation();
+  controls.onkeydown = e => e.stopPropagation();
+  row.append(controls);
+  row.onclick = () => details(row.job);
+  row.onkeydown = e => {
+    if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); details(row.job); }
+  };
+  return row;
+}
+function updateRow(row, j) {
+  row.job = j;
+  row.className = stateTone(j.state);
+  row.setAttribute('aria-label', 'Details für ' + j.id + ', ' + (names[j.state] || j.state));
+  const cells = [
+    j.id.slice(0,10) + ' · ' + date(j.created), j.script + ' · ' + j.owner + ' / ' + j.model,
+    names[j.state] || j.state, budget(j),
+    (priorities[j.priority] || 'Normal') + (j.effective_priority > j.priority ? ' → ' + priorities[j.effective_priority] + ' (Wartebonus)' : ''),
+    j.jobs_ahead ?? 0, numberText(j.wait_seconds) + ' s / ' + numberText(j.run_seconds) + ' s',
+    reason(j), patient(j)
+  ];
+  cells.forEach((value, i) => text(row.children[i], value));
+  const controls = row.children[9];
+  controls.hidden = !csrf;
+  updateControls(controls, j);
+}
+function renderGpu(gpu, paused) {
+  const m = gpuMeter(gpu, Date.now() / 1000);
+  text(el('gpu-name'), gpu.name || 'GPU 0');
+  text(el('gpu-state'), paused ? 'Zuteilung pausiert · Queue bleibt erhalten' : 'Zuteilung aktiv');
+  text(el('gpu-values'), m.available
+    ? numberText(gpu.used_mb) + ' / ' + numberText(gpu.total_mb) + ' MiB belegt · ' + numberText(gpu.free_mb) + ' MiB frei'
+    : 'GPU-Messung nicht verfügbar' + (gpu.error ? ' · ' + gpu.error : ''));
+  el('gpu-meter').dataset.stale = String(m.stale);
+  el('gpu-meter').dataset.missing = String(!m.available);
+  if (m.available) el('gpu-meter').setAttribute('aria-valuenow', m.percent.toFixed(1));
+  else el('gpu-meter').removeAttribute('aria-valuenow');
+  el('gpu-meter').setAttribute('aria-valuetext', !m.available ? 'Messung fehlt' : numberText(m.percent) + ' Prozent belegt' + (m.stale ? ', Messung veraltet' : ''));
+  el('gpu-fill').style.width = m.percent + '%';
+  el('gpu-pointer').style.left = m.percent + '%';
+  text(el('gpu-utilization'), 'GPU-Auslastung: ' + (m.utilization === null ? '–' : numberText(m.utilization) + ' %'));
+  text(el('gpu-observed'), m.age === null ? 'Messzeitpunkt fehlt · nicht aktuell bestätigt' : (m.stale ? 'Messung veraltet' : 'Gemessen') + ' · vor ' + Math.floor(m.age) + ' s · ' + date(gpu.observed_at));
+}
+function renderSnapshot(s, historyJobs = s.jobs || []) {
+  applyAuthorization(s);
+  lastStatus = s;
+  lastHistory = historyJobs;
+  renderGpu(s.gpu || {}, s.paused);
+  const allCurrent = s.jobs || [];
+  for (const lane of ['gpu','cpu']) {
+    const jobs = allCurrent.filter(j => (j.lane || 'gpu') === lane);
+    const button = el('tab-' + lane);
+    text(button, lane.toUpperCase() + ' · ' + jobs.filter(j => activeStates.has(j.state) && j.state !== 'recovery_blocked').length + ' aktiv · ' + jobs.filter(j => j.state === 'queued').length + ' wartend · ' + jobs.filter(j => j.state === 'recovery_blocked').length + ' Klärung');
+    button.setAttribute('aria-selected', String(selectedLane === lane));
+    button.tabIndex = selectedLane === lane ? 0 : -1;
+  }
+  el('lane-panel').setAttribute('aria-labelledby', 'tab-' + selectedLane);
+  el('gpu').hidden = selectedLane !== 'gpu';
+  text(el('active-heading'), selectedLane.toUpperCase() + ' · Jetzt aktiv');
+  text(el('history-heading'), selectedLane.toUpperCase() + ' · Jobs und Historie');
+  el('screenshot').setAttribute('aria-pressed', String(screenshotMode));
+  text(el('screenshot'), screenshotMode ? 'Screenshot-Schutz AN · Patienten wieder anzeigen' : 'Screenshot-Schutz AUS · Patienten verbergen');
+  const current = allCurrent.filter(j => (j.lane || 'gpu') === selectedLane), active = activeJobs(current);
+  const laneHistory = historyJobs.filter(j => (j.lane || 'gpu') === selectedLane);
+  text(el('active-count'), active.filter(j => j.state !== 'recovery_blocked').length);
+  text(el('queued-count'), current.filter(j => j.state === 'queued').length);
+  text(el('blocked-count'), active.filter(j => j.state === 'recovery_blocked').length);
+  reconcile(el('active-jobs'), cards, active, createCard, updateCard);
+  el('active-empty').hidden = active.length > 0;
+  text(el('active-empty'), 'Keine aktiven Aufträge. Wartende Aufträge stehen in der Tabelle.');
+  const visible = visibleJobs(laneHistory, el('hide-ended').checked);
+  reconcile(el('jobs'), rows, visible, createRow, updateRow);
+  el('table-empty').hidden = visible.length > 0;
+  text(el('table-empty'), el('hide-ended').checked ? 'Keine offenen Aufträge auf dieser Seite. Für abgeschlossene Jobs „Beendete ausblenden“ abwählen.' : 'Keine Jobs auf dieser Seite.');
+  const ended = laneHistory.filter(j => terminalStates.has(j.state)).length;
+  text(el('page-info'), (offset ? 'Historie ab Eintrag ' + (offset + 1) : 'Aktuelle Historie') + ' · ' + ended + ' beendete Jobs geladen' + (el('hide-ended').checked ? ' (ausgeblendet)' : '') + '. Aktive Karten bleiben aktuell.');
+  el('older').disabled = !privacy.authorized || ended < 100;
+  if (selectedId) {
+    const selected = current.find(j => j.id === selectedId) || laneHistory.find(j => j.id === selectedId);
+    if (selected) details(selected); else clearDetails();
+  }
+}
+function clearSensitiveView() {
+  // Fail closed on lost authentication, malformed responses or network failure.
+  // Invalidate snapshots already awaiting /status or /history when access is lost.
+  viewEpoch++;
+  applyAuthorization({private_unlocked:false,operator_unlocked:false});
+  lastStatus = null;
+  lastHistory = [];
+  clearDetails();
+  closeCancel();
+  reconcile(el('active-jobs'), cards, [], createCard, updateCard);
+  reconcile(el('jobs'), rows, [], createRow, updateRow);
+  text(el('active-count'), '–'); text(el('queued-count'), '–'); text(el('blocked-count'), '–');
+  for (const lane of ['gpu','cpu']) text(el('tab-' + lane), lane.toUpperCase() + ' · Zähler nicht aktuell');
+  el('active-empty').hidden = false;
+  text(el('active-empty'), 'Verbindung unterbrochen. Bisherige Inhalte wurden ausgeblendet.');
+  el('table-empty').hidden = false;
+  text(el('table-empty'), 'Warte auf die lokale Verbindung und aktuelle Daten.');
+  text(el('page-info'), 'Keine aktuelle Historie geladen.');
+  renderGpu({}, false);
+  text(el('gpu-state'), 'Verbindung unterbrochen');
+}
+async function change(j, action, data) {
+  if (!csrf) return false;
+  try {
+    const response = await fetch('/jobs/' + j.id + action, {
+      method:'POST', headers:{'Content-Type':'application/json','X-GPU-CSRF':csrf},
+      body:JSON.stringify(data)
+    });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) clearSensitiveView();
+      throw new Error('Änderung abgelehnt: Sitzung abgelaufen oder Jobstatus geändert.');
+    }
+    await refresh();
+    return true;
+  } catch (e) {
+    clearSensitiveView();
+    text(el('error'), e.message);
+    return false;
+  }
+}
+async function refresh() {
+  if (refreshInFlight) { refreshAgain = true; return; }
+  refreshInFlight = true;
+  let snapshotEpoch = viewEpoch;
+  try {
+    const response = await fetch('/status', {cache:'no-store'});
+    if (!response.ok) throw new Error('status_unavailable');
+    const s = await response.json();
+    if (snapshotEpoch !== viewEpoch) return;
+    if (!Array.isArray(s.jobs)) throw new Error('invalid_status');
+    // Revoke rich paths and operator controls before awaiting local history.
+    if ((!s.local_read_allowed && privacy.authorized) || (!s.private_unlocked && lastStatus?.private_unlocked)) {
+      const localPreference = s.local_read_allowed && privacy.authorized ? {...privacy} : null;
+      clearSensitiveView();
+      // Rich-session expiry does not revoke confirmed local read access or the
+      // user's display preference. Private paths and controls stay cleared.
+      if (localPreference) privacy = localPreference;
+      snapshotEpoch = viewEpoch; // This response is public and may still be rendered.
+    }
+    let historyJobs = s.jobs;
+    if (s.local_read_allowed) {
+      const history = await fetch('/history?offset=' + offset + '&lane=' + selectedLane, {cache:'no-store'});
+      if (!history.ok) throw new Error('history_unavailable');
+      const data = await history.json();
+      if (!Array.isArray(data.jobs)) throw new Error('invalid_history');
+      historyJobs = data.jobs;
+    }
+    if (snapshotEpoch !== viewEpoch) return;
+    renderSnapshot(s, historyJobs);
+    text(el('error'), '');
+  } catch (e) {
+    clearSensitiveView();
+    text(el('error'), 'Lokaler Koordinator nicht erreichbar. Bereits gespeicherte Jobs bleiben erhalten.');
+  } finally {
+    refreshInFlight = false;
+    if (refreshAgain) { refreshAgain = false; void refresh(); }
+  }
+}
+el('cancel-no').onclick = closeCancel;
+el('cancel-yes').onclick = async () => {
+  const job = pendingCancel;
+  if (!job) return;
+  el('cancel-yes').disabled = true;
+  try { if (await change(job, '/cancel', {})) closeCancel(); }
+  finally { el('cancel-yes').disabled = false; }
+};
+el('older').onclick = () => { viewEpoch++; offset += 100; clearDetails(); refresh(); };
+el('current').onclick = () => { viewEpoch++; offset = 0; clearDetails(); refresh(); };
+function selectLane(lane) {
+  if (!['gpu','cpu'].includes(lane) || lane === selectedLane) return;
+  viewEpoch++;
+  selectedLane = lane; offset = 0; clearDetails(); closeCancel();
+  // Never reuse a previous lane's paginated history. Active status is current.
+  if (lastStatus) renderSnapshot(lastStatus, (lastStatus.jobs || []).filter(j => !terminalStates.has(j.state)));
+  refresh();
+}
+for (const lane of ['gpu','cpu']) {
+  el('tab-' + lane).onclick = () => selectLane(lane);
+  el('tab-' + lane).onkeydown = e => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+    e.preventDefault();
+    const next = e.key === 'Home' ? 'gpu' : e.key === 'End' ? 'cpu' : lane === 'gpu' ? 'cpu' : 'gpu';
+    selectLane(next); el('tab-' + next).focus();
+  };
+}
+el('screenshot').onclick = () => {
+  screenshotMode = !screenshotMode;
+  // No CSS-only blur: replace the actual DOM text and its accessible equivalent.
+  if (lastStatus) renderSnapshot(lastStatus, lastHistory);
+  else {
+    el('screenshot').setAttribute('aria-pressed', String(screenshotMode));
+    text(el('screenshot'), screenshotMode ? 'Screenshot-Schutz AN · Patienten wieder anzeigen' : 'Screenshot-Schutz AUS · Patienten verbergen');
+  }
+  if (pendingCancel) text(el('cancel-text'), pendingCancel.id + ' · ' + pendingCancel.owner + ' / ' + pendingCancel.model);
+};
+el('private').onchange = () => {
+  privacy.show = privacy.authorized && el('private').checked;
+  clearDetails();
+  if (lastStatus) renderSnapshot(lastStatus, lastHistory);
+};
+el('hide-ended').onchange = () => { if (lastStatus) renderSnapshot(lastStatus, lastHistory); };
+// BEGIN BOOT
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "GPUqueue: applications, coordinator and Ollama",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1240,
+      760
+    ]
+  },
+  "components": [
+    {
+      "id": "applications",
+      "type": "frontend",
+      "label": "Local applications",
+      "sublabel": "Chat, indexing, automation",
+      "pos": [
+        50,
+        300
+      ],
+      "size": [
+        250,
+        85
+      ]
+    },
+    {
+      "id": "coordinator",
+      "type": "messagebus",
+      "label": "GPUqueue coordinator",
+      "sublabel": "HTTP 127.0.0.1:11436",
+      "tag": "PRIORITY + ADMISSION",
+      "pos": [
+        480,
+        300
+      ],
+      "size": [
+        270,
+        85
+      ]
+    },
+    {
+      "id": "ollama",
+      "type": "backend",
+      "label": "Ollama",
+      "sublabel": "Internal HTTP :11434",
+      "pos": [
+        930,
+        300
+      ],
+      "size": [
+        250,
+        85
+      ]
+    },
+    {
+      "id": "watchdog",
+      "type": "backend",
+      "label": "Watchdog",
+      "sublabel": "Windows scheduled task",
+      "pos": [
+        480,
+        60
+      ],
+      "size": [
+        270,
+        85
+      ]
+    },
+    {
+      "id": "desktop",
+      "type": "frontend",
+      "label": "Tray + web dashboard",
+      "sublabel": "GPU status / separate CPU tab",
+      "pos": [
+        50,
+        590
+      ],
+      "size": [
+        250,
+        85
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "Durable local store",
+      "sublabel": "SQLite + Windows DPAPI",
+      "pos": [
+        480,
+        590
+      ],
+      "size": [
+        270,
+        85
+      ]
+    },
+    {
+      "id": "hardware",
+      "type": "external",
+      "label": "Local GPU / CPU",
+      "sublabel": "Models execute on this host",
+      "pos": [
+        930,
+        590
+      ],
+      "size": [
+        250,
+        85
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "submit",
+      "from": "applications",
+      "to": "coordinator",
+      "label": "Requests / results",
+      "variant": "emphasis"
+    },
+    {
+      "id": "inference",
+      "from": "coordinator",
+      "to": "ollama",
+      "label": "Admitted inference",
+      "variant": "emphasis"
+    },
+    {
+      "id": "watch",
+      "from": "watchdog",
+      "to": "coordinator",
+      "label": "Health / restart",
+      "labelDy": 80
+    },
+    {
+      "id": "status",
+      "from": "desktop",
+      "to": "coordinator",
+      "label": "Read status",
+      "variant": "dashed"
+    },
+    {
+      "id": "persist",
+      "from": "coordinator",
+      "to": "store",
+      "label": "Jobs + results",
+      "labelDy": 80
+    },
+    {
+      "id": "execute",
+      "from": "ollama",
+      "to": "hardware",
+      "label": "Model execution",
+      "labelDy": 80
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "A shared front door",
+      "items": [
+        "Integrated apps send inference to :11436.",
+        "Results return through the coordinator."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Command workloads too",
+      "items": [
+        "client.py requests a lease, then launches its own process tree.",
+        "Managed CUDA jobs share the same admission policy."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Explicit limits",
+      "items": [
+        "Direct backend / CUDA callers can bypass the queue.",
+        "Uncertain cleanup stays blocked; no speculative replay."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+name: Windows tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest coordinator/tests tests -q
+      - name: Compile desktop source
+        shell: powershell
+        run: .\Build.ps1
+      - name: Test compiled desktop with synthetic snapshots
+        shell: powershell
+        run: powershell.exe -NoProfile -STA -File tests/Test-Desktop.ps1
