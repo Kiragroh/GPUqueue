@@ -9,7 +9,8 @@ development, not implemented guarantees.
 - [ ] English desktop/web localization and an explicit language setting.
 - [ ] Configurable, validated CPU embedding profiles instead of a single alias.
 - [ ] Configurable admission policy and better measured peak-memory estimates.
-- [ ] Bounded retention/export for durable history and response storage.
+- [x] Bounded retention for request bodies and response storage (7 days).
+- [ ] Configurable retention and export for durable job history.
 - [ ] Per-application identity and access controls if the trust model expands.
 - [ ] Additional backend compatibility tests for streaming, cancellation and
   uncommon OpenAI-style features. No universal drop-in API claim.

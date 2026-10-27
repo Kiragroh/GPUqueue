@@ -165,7 +165,8 @@ created by the installer. CPU cleanup compatibility still needs work.
   not proof that the model was released.
 - Uncertain backend cleanup blocks that lane. It is never automatically cleared
   merely because the watchdog restarted the broker.
-- No automatic history retention limit yet. Disk space, power loss, driver
+- Request bodies and results are pruned 7 days after a job finishes; job
+  metadata and events are kept without a limit. Disk space, power loss, driver
   failures and unintegrated workloads remain operational concerns.
 
 See [SECURITY.md](SECURITY.md) and [known limitations](ROADMAP.md). Contributions

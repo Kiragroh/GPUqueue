@@ -11,6 +11,37 @@ def submit(s, name='test', **kwargs):
 def probe(free=16000):
     return {'free_mb':free,'observed_at':time.time()}
 
+def test_prune_drops_old_terminal_payloads_and_chunks_only(tmp_path):
+    s=Store(tmp_path/'q.db');old=submit(s,'old');recent=submit(s,'recent');queued=submit(s,'queued')
+    for identifier in (old,recent):
+        s.claim(snapshot=probe());s.chunk(identifier,b'result');s.finish(identifier,'completed')
+    with s.db:s.db.execute('update jobs set ended=? where id=?',(time.time()-8*86400,old))
+    assert s.prune(retention_seconds=7*86400,batch=1)==1
+    assert s.prune(retention_seconds=7*86400)==0
+    assert s.row(old)['payload'] is None and s.chunks(old)==[]
+    with pytest.raises(LookupError):s.payload(old)
+    assert s.row(old)['state']=='completed'  # history and events stay
+    assert s.payload(recent)==b'{}' and s.chunks(recent)==[b'result']
+    assert s.payload(queued)==b'{}'
+
+def test_prune_candidates_are_indexed(tmp_path):
+    import store
+    s=Store(tmp_path/'q.db')
+    plan=' '.join(r[3] for r in s.db.execute('EXPLAIN QUERY PLAN '+store.PRUNE_CANDIDATES_SQL,(0,1)))
+    assert 'USING INDEX jobs_ended_state' in plan
+
+def test_history_listing_walks_seq_index_without_sorting(tmp_path):
+    # The dashboard polls this under the store lock; a full sort starved /status.
+    s=Store(tmp_path/'q.db');statements=[]
+    s.db.set_trace_callback(statements.append)
+    for lane in (None,'gpu'):s.listing(lane=lane)
+    s.db.set_trace_callback(None)
+    history=[q for q in statements if 'order by seq desc' in q]
+    assert len(history)==2
+    for query in history:
+        plan=' '.join(r[3] for r in s.db.execute('EXPLAIN QUERY PLAN '+query))
+        assert 'USING INDEX jobs_seq' in plan and 'TEMP B-TREE' not in plan
+
 def test_priority_aging_fifo(tmp_path):
     s=Store(tmp_path/'q.db')
     a=submit(s,'background',priority=0);b=submit(s,'high',priority=20)
