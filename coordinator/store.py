@@ -12,6 +12,11 @@ from scheduling import admission, effective_priority, queue_order
 
 TERMINAL={'completed','failed','cancelled','interrupted'}
 ACTIVE={'running','preparing','draining','cancelling','recovery_blocked'}
+# submit() always stores a payload, so NULL marks a pruned job.
+PRUNE_CANDIDATES_SQL="SELECT id FROM jobs WHERE +state IN ('completed','failed','cancelled','interrupted') AND ended<? AND payload IS NOT NULL LIMIT ?"
+RETENTION_SECONDS=7*86400
+
+class ResultExpired(LookupError):pass
 
 def protect(value):
     return win32crypt.CryptProtectData(value,'GPUCoordinator',None,None,None,1)
@@ -53,7 +58,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
             INSERT OR IGNORE INTO settings VALUES('paused','0');
             CREATE INDEX IF NOT EXISTS events_job_at ON events(job,at);
-            CREATE INDEX IF NOT EXISTS jobs_state_seq ON jobs(state,seq);''')
+            CREATE INDEX IF NOT EXISTS jobs_state_seq ON jobs(state,seq);
+            CREATE INDEX IF NOT EXISTS jobs_ended_state ON jobs(ended,state);
+            CREATE INDEX IF NOT EXISTS jobs_seq ON jobs(seq);''')
         self.db.commit()
         # Payloads may contain many MiB of encrypted images. Status/scheduling
         # must never materialize them; only payload()/specification need them.
@@ -140,7 +147,21 @@ class Store:
             self.db.execute("update settings set value=? where key='paused'",('1' if paused else '0',))
             return {'paused':paused,'idle':not self.active_rows()}
 
-    def payload(self,identifier):return unprotect(self.row(identifier)['payload'])
+    def payload(self,identifier):
+        value=self.row(identifier)['payload']
+        if value is None:raise ResultExpired(identifier)
+        return unprotect(value)
+
+    def prune(self,retention_seconds=RETENTION_SECONDS,batch=200):
+        """Drop request bodies and results of long-finished jobs; keep history.
+
+        Small batches keep the store lock short for status and scheduling."""
+        with self.lock,self.db:
+            ids=[r[0] for r in self.db.execute(PRUNE_CANDIDATES_SQL,(time.time()-retention_seconds,batch))]
+            for identifier in ids:
+                self.db.execute('UPDATE jobs SET payload=NULL WHERE id=?',(identifier,))
+                self.db.execute('DELETE FROM chunks WHERE job=?',(identifier,))
+            return len(ids)
 
     def chunk(self,identifier,body):
         with self.lock,self.db:
@@ -246,7 +267,9 @@ class Store:
             waiting=sorted([dict(r) for r in self.db.execute(f"select {self._metadata_columns} from jobs where state='queued'")],key=queue_order)
             lane_sql=" and coalesce(lane,'gpu')=?" if lane else ''
             parameters=((lane,) if lane else ())+(min(200,limit),offset)
-            history=[dict(r) for r in self.db.execute(f"select {self._metadata_columns} from jobs where state in ('completed','failed','cancelled','interrupted'){lane_sql} order by seq desc limit ? offset ?",parameters)]
+            # +state: walk jobs_seq newest-first and stop at the limit instead of
+            # sorting every finished job under the lock on each dashboard poll.
+            history=[dict(r) for r in self.db.execute(f"select {self._metadata_columns} from jobs where +state in ('completed','failed','cancelled','interrupted'){lane_sql} order by seq desc limit ? offset ?",parameters)]
             rows=[r for r in active+waiting+history if lane is None or (r.get('lane') or 'gpu')==lane];events={};attempts={}
             if private and rows:
                 ids=[r['id'] for r in rows];marks=','.join('?' for _ in ids)

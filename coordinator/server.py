@@ -18,7 +18,7 @@ from urllib.parse import urlsplit,parse_qs
 
 import psutil
 import requests
-from store import Store, ACTIVE, TERMINAL
+from store import Store, ACTIVE, TERMINAL, ResultExpired
 
 STATE=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'GPUqueue/state'
 BACKEND='http://127.0.0.1:11434'
@@ -57,8 +57,15 @@ class Broker:
         self.gpu={};self.probe=threading.Thread(target=self.probe_loop,daemon=True)
 
     def probe_loop(self):
+        pruned_at=0
         while not self.stop.is_set():
-            self.gpu=gpu_snapshot();self.stop.wait(4)
+            self.gpu=gpu_snapshot()
+            if time.monotonic()-pruned_at>3600:
+                # One batch per probe until done; each batch holds the lock briefly.
+                try:
+                    if self.store.prune()==0:pruned_at=time.monotonic()
+                except Exception:pruned_at=time.monotonic()
+            self.stop.wait(4)
 
     def start(self):self.worker.start();self.probe.start()
 
@@ -269,6 +276,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[2]=='specification':return self.respond(200,json.loads(self.broker.store.payload(parts[1])))
             return self.respond(404,{'error':'not_found'})
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+        except ResultExpired:self.respond(410,{'error':'result_expired'})
         except KeyError:self.respond(404,{'error':'unknown_job'})
         except Exception:self.respond(503,{'error':'request_failed'})
 
@@ -276,6 +284,7 @@ class Handler(BaseHTTPRequestHandler):
         store=self.broker.store
         while True:
             r=store.row(identifier)
+            if r['payload'] is None:raise ResultExpired(identifier)
             if r['http_status'] is not None:break
             if r['state'] in TERMINAL or r['state']=='recovery_blocked':
                 return self.respond(409,{'job_id':identifier,'state':r['state'],'reason':r['reason']})

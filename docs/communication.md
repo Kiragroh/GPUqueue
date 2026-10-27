@@ -22,7 +22,9 @@
 The default HTTP request stays connected while waiting. `Prefer: respond-async`
 instead returns HTTP 202 and a durable job ID immediately after acceptance.
 Authenticated `GET /jobs/ID` and `GET /jobs/ID/result` retrieve status and retained
-response bytes. Reading a saved result does not rerun inference. Client retry
+response bytes. Reading a saved result does not rerun inference. Bodies and results
+are kept for 7 days after the job finishes; afterwards `result` and `specification`
+answer HTTP 410 `result_expired` while status and history remain. Client retry
 coalescing is not a universal exactly-once guarantee across arbitrary retries.
 
 Metadata GETs `/api/ps`, `/api/tags`, `/api/version` and `/v1/models` are forwarded

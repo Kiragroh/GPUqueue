@@ -35,6 +35,16 @@ def app(tmp_path,monkeypatch):
     backend.allow.set();broker.stop.set();broker.worker.join(3);http.shutdown();backend.shutdown();http.server_close();backend.server_close();broker.store.db.close();broker.lockfile.close()
 
 def token(b):return {'X-GPU-Token':b.token}
+
+def test_pruned_job_result_and_specification_report_expired(app):
+    b,url,backend=app
+    id=b.submit_ollama('/api/embed',b'{"model":"other","input":"a"}','test')
+    assert wait_terminal(b,id)['state']=='completed'
+    with b.store.db:b.store.db.execute('update jobs set ended=? where id=?',(time.time()-8*86400,id))
+    assert b.store.prune()==1
+    for route in ('result','specification'):
+        r=requests.get(url+'/jobs/'+id+'/'+route,headers=token(b))
+        assert r.status_code==410 and r.json()['error']=='result_expired'
 def wait_terminal(b,id):
     for _ in range(100):
         r=b.store.row(id)
