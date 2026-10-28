@@ -24,8 +24,12 @@ STATE=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'GPUqueue/state'
 BACKEND='http://127.0.0.1:11434'
 ROUTES={'/api/generate','/api/chat','/api/embed','/api/embeddings','/v1/chat/completions','/v1/completions','/v1/embeddings','/v1/responses','/v1/systemone'}
 READ_ROUTES={'/api/ps','/api/tags','/api/version','/v1/models'}
+# Transport failures and broker restarts leave the request's fate unknown.
+RECOVERABLE={'backend_or_cleanup_uncertain','broker_restart_backend_state_uncertain'}
 
 class OwnerExitedBeforeStart(Exception):pass
+
+def canonical(name):return name if ':' in name.rsplit('/',1)[-1] else name+':latest'
 
 def alive(pid,birth):
     if not pid:return False
@@ -55,11 +59,14 @@ class Broker:
         self.ui_tickets={};self.ui_sessions={}
         self.worker=threading.Thread(target=self.work,daemon=True)
         self.gpu={};self.probe=threading.Thread(target=self.probe_loop,daemon=True)
+        self.recovery_checks={}
 
     def probe_loop(self):
         pruned_at=0
         while not self.stop.is_set():
             self.gpu=gpu_snapshot()
+            try:self.reconcile_blocked_inference()
+            except Exception:self.recovery_checks.clear()  # Missing proof keeps reservations.
             if time.monotonic()-pruned_at>3600:
                 # One batch per probe until done; each batch holds the lock briefly.
                 try:
@@ -69,12 +76,55 @@ class Broker:
 
     def start(self):self.worker.start();self.probe.start()
 
+    def resident_models(self):
+        response=requests.get(self.backend+'/api/ps',timeout=10);response.raise_for_status()
+        return {canonical(m.get('name','')) for m in response.json().get('models',[])}
+
+    def idle_backend(self):
+        """Identity of the local Ollama server while it has no runner and no model."""
+        parts=urlsplit(self.backend)
+        if parts.hostname not in {'127.0.0.1','localhost'}:return None
+        listeners=[c for c in psutil.net_connections(kind='tcp') if c.status==psutil.CONN_LISTEN and c.laddr.port==parts.port]
+        if not listeners or len({c.pid for c in listeners})!=1:return None
+        server=psutil.Process(listeners[0].pid)
+        if Path(server.name()).stem.lower()!='ollama' or 'serve' not in server.cmdline():return None
+        for child in server.children(recursive=True):
+            name=Path(child.name()).stem.lower()
+            if name=='llama-server' or (name=='ollama' and 'runner' in child.cmdline()):return None
+        response=requests.get(self.backend+'/api/ps',timeout=2);response.raise_for_status()
+        if response.json().get('models')!=[]:return None
+        return (server.pid,server.create_time())
+
+    def reconcile_blocked_inference(self):
+        # Release a blocked lane only after Ollama is twice proven idle with no
+        # other inference running. Never replay the request.
+        now=time.monotonic()
+        active=self.store.active_rows()
+        candidates=[r for r in active if r['kind']=='ollama' and r['state']=='recovery_blocked' and r['reason'] in RECOVERABLE and r['started']]
+        if not candidates or any(r['kind']=='ollama' and r['state']!='recovery_blocked' for r in active):
+            self.recovery_checks.clear();return
+        resident=self.resident_models()
+        for r in candidates:
+            if canonical(r['model']) in resident:self.unload(r['model'])
+        identity=self.idle_backend()
+        if identity is None:
+            self.recovery_checks.clear();return
+        checked={}
+        for r in candidates:
+            previous=self.recovery_checks.get(r['id'])
+            if previous and previous[0]==identity and now-previous[1]>=2:
+                with self.store.lock:
+                    current=self.store.row(r['id'])
+                    if current['state']=='recovery_blocked' and current['reason']==r['reason']:
+                        self.store.finish(r['id'],'failed','backend_verified_idle_no_replay')
+            else:checked[r['id']]=(identity,now)
+        self.recovery_checks=checked
+
     def unload(self,model):
         # Never unload unrelated residents or another concurrent request's model.
         r=requests.post(self.backend+'/api/generate',json={'model':model,'keep_alive':0,'stream':False},timeout=120)
         r.raise_for_status()
         response=requests.get(self.backend+'/api/ps',timeout=10);response.raise_for_status()
-        canonical=lambda name:name if ':' in name.rsplit('/',1)[-1] else name+':latest'
         if any(canonical(m.get('name',''))==canonical(model) for m in response.json().get('models',[])):
             raise RuntimeError('model_unload_not_confirmed')
 

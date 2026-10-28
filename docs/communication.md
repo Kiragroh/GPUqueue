@@ -18,6 +18,9 @@
 7. Confirmed cleanup permits a terminal state. An exception whose cleanup is
    uncertain leaves `recovery_blocked`, retaining the lane reservation. The
    client may already have received an HTTP 200 response at this point.
+   A transport failure or coordinator restart also blocks the lane. It is
+   released without replay once Ollama is twice proven idle (no runner, no
+   loaded model, no other inference); see `docs/operations.md`.
 
 The default HTTP request stays connected while waiting. `Prefer: respond-async`
 instead returns HTTP 202 and a durable job ID immediately after acceptance.
