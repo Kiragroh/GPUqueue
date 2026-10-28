@@ -37,6 +37,13 @@ First inspect the exact job and its last state transitions. For commands, verify
 the original owning process, child and descendants. For Ollama, verify backend
 state and loaded models. A timeout does not prove inference stopped.
 
+Ollama jobs blocked by a transport failure or a coordinator restart release
+themselves: the coordinator unloads that job's own model and then needs two
+consecutive proofs, at least two seconds apart, that the same local Ollama server
+has no runner process and no loaded model while no other inference is active.
+The job then ends `failed` with `backend_verified_idle_no_replay`; it is never
+replayed. Command jobs and other blockages still need explicit reconciliation.
+
 `client.py recover JOB_ID --confirmed-idle` is an **operator assertion**, not an
 automatic diagnostic. Use it only after independently confirming safe cleanup.
 It marks an uncertain job interrupted; it does not replay the request. Review any

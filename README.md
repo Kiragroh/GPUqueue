@@ -29,7 +29,7 @@ It is not an Ollama fork, a GPU driver, or a cluster scheduler.
 | Conservative admission | Priority aging, FIFO ties, fresh GPU measurements and declared VRAM budgets; unknown budgets run exclusively. |
 | Durable requests | SQLite stores jobs, events and encrypted inputs/results. Async jobs receive an ID before inference. |
 | Visible status | GPU-first tray status, CPU in a separate tab, CPU/GPU utilization, VRAM and a web history view. |
-| Recovery | A watchdog restarts a missing coordinator. Ambiguous cleanup remains blocked for explicit reconciliation. |
+| Recovery | A watchdog restarts a missing coordinator. Inference blocked by a timeout or restart is released, without replay, once Ollama is proven idle; other ambiguous cleanup remains blocked for explicit reconciliation. |
 | Per-user autostart | Optional installer registers the tray and watchdog with Windows Task Scheduler. |
 
 **Limits are deliberate:** only integrated programs participate. Direct CUDA or
